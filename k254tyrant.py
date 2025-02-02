@@ -53,18 +53,34 @@ class k254Tyrant(Peer):
         peers.sort(key=lambda p: p.id)
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
+        
+        # Track peer download speeds based on past history
+        peer_speeds = {peer.id: 0 for peer in peers}
+
+        if history.current_round() > 0:
+            last_round = history.downloads[-1]
+            for download in last_round:
+                peer_speeds[download.from_id] += download.blocks  # More blocks = faster peer
+
+        # Sort peers by speed (fastest first)
+        peers.sort(key=lambda p: peer_speeds.get(p.id, 0), reverse=True)
+
+        # Count availability of each needed piece across all peers
+        piece_counts = {}  # Dictionary to track how many peers have each piece
+        for peer in peers:
+            for piece in peer.available_pieces:
+                if piece in np_set:  # Only count pieces that we actually need
+                    piece_counts[piece] = piece_counts.get(piece, 0) + 1
+            
+        # Request pieces from peers
         for peer in peers:
             av_set = set(peer.available_pieces)
-            isect = av_set.intersection(np_set)
+            isect = av_set.intersection(np_set)  # Pieces we need and peer has
             n = min(self.max_requests, len(isect))
-            # More symmetry breaking -- ask for random pieces.
-            # This would be the place to try fancier piece-requesting strategies
-            # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in random.sample(sorted(isect), n):
-                # aha! The peer has this piece! Request it.
-                # which part of the piece do we need next?
-                # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id]
+        
+            # Prioritize the rarest pieces, then by fastest responding peers
+            for piece_id in sorted(isect, key=lambda p: (piece_counts[p], -peer_speeds.get(peer.id, 0)))[:n]:  
+                start_block = self.pieces[piece_id]  # Next needed block
                 r = Request(self.id, peer.id, piece_id, start_block)
                 requests.append(r)
 
@@ -89,22 +105,43 @@ class k254Tyrant(Peer):
         # has a list of Download objects for each Download to this peer in
         # the previous round.
 
+        
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
-            chosen = []
-            bws = []
-        else:
-            logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
+            return []
+        peer_contributions = {}
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
+        
+       
+        if history.current_round() > 0:
+            last_round = history.downloads[-1]  # Get the latest round’s downloads
+            for download in last_round:
+                peer_contributions[download.from_id] = peer_contributions.get(download.from_id, 0) + download.blocks
+
+        # Prioritize peers who have contributed the most
+        # Select top contributors
+        # Adaptive bandwidth allocation - Increase allocation to top contributors
+        peer_bandwidth_allocation = {peer_id: (peer_contributions[peer_id] / total_contribution) * self.up_bw for peer_id in sorted_peers}
+        
+        # Adjust for cases where we over-allocate
+        scaling_factor = self.up_bw / sum(peer_bandwidth_allocation.values()) if sum(peer_bandwidth_allocation.values()) > 0 else 1
+        
+        bws = [int(peer_bandwidth_allocation[peer_id] * scaling_factor) for peer_id in chosen]
+
+        
+        # Occasionally unchoke a new peer with a small chance (exploration)
+        if len(chosen) < self.max_requests and random.random() < 0.2:  # 20% chance
+            new_peers = [r.requester_id for r in requests if r.requester_id not in chosen]
+            if new_peers:
+                new_peer = random.choice(new_peers)
+                chosen.append(new_peer)
+                bws.append(int(self.up_bw * 0.1))  # Give them a small fraction of bandwidth
+        
+        # Ensure bandwidth is fairly distributed
+        if sum(bws) == 0:
+            chosen = [r.requester_id for r in random.sample(requests, min(len(requests), self.max_requests))]
             bws = even_split(self.up_bw, len(chosen))
-
-        # create actual uploads out of the list of peer ids and bandwidths
-        uploads = [Upload(self.id, peer_id, bw)
-                   for (peer_id, bw) in zip(chosen, bws)]
-            
+        
+        uploads = [Upload(self.id, peer_id, bw) for peer_id, bw in zip(chosen, bws)]
         return uploads
+
