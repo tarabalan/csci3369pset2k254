@@ -32,7 +32,6 @@ class k254PropShare(Peer):
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
         np_set = set(needed_pieces)  # sets support fast intersection ops.
 
-
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
 
@@ -77,34 +76,57 @@ class k254PropShare(Peer):
         history -- history for all previous rounds
 
         returns: list of Upload objects.
-
-        In each round, this will be called after requests().
         """
-
         round = history.current_round()
         logging.debug("%s again.  It's round %d." % (
             self.id, round))
-        # One could look at other stuff in the history too here.
-        # For example, history.downloads[round-1] (if round != 0, of course)
-        # has a list of Download objects for each Download to this peer in
-        # the previous round.
 
-        if len(requests) == 0:
-            logging.debug("No one wants my pieces!")
+        # Calculate total download contributions from the previous round
+        total_download = 0
+        peer_contributions = {}
+        
+        if round > 0:  # Make sure it's not the first round
+            last_round = history.downloads[-1]  # Get the previous round's downloads
+            total_download = sum([download.blocks for download in last_round])
+            for download in last_round:
+                peer_contributions[download.from_id] = peer_contributions.get(download.from_id, 0) + download.blocks
+
+        # Calculate the proportion of total download for each peer
+        upload_shares = {}
+        if total_download > 0:
+            for peer_id, contribution in peer_contributions.items():
+                upload_shares[peer_id] = contribution / total_download
+
+        # Calculate proportional upload bandwidth for each peer
+        total_upload = self.up_bw
+        upload_bandwidths = {}
+
+        for peer_id, share in upload_shares.items():
+            upload_bandwidths[peer_id] = int(share * total_upload)
+
+        # Reserve 10% of upload bandwidth for optimistic unblocking
+        optimistic_bandwidth = int(total_upload * 0.1)
+        total_upload -= optimistic_bandwidth  # Subtract this from the total bandwidth
+
+        # Choose a random peer for optimistic unblocking
+        if requests:
+            chosen = [random.choice(requests).requester_id]  # Randomly select a peer
+            bws = [optimistic_bandwidth]  # Give them the reserved bandwidth for optimistic unblocking
+        else:
             chosen = []
             bws = []
-        else:
-            logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+        # Allocate remaining bandwidth proportionally to the peers
+        remaining_peers = [peer_id for peer_id in upload_bandwidths.keys() if peer_id not in chosen]
+        remaining_bandwidth = total_upload
 
-        # create actual uploads out of the list of peer ids and bandwidths
-        uploads = [Upload(self.id, peer_id, bw)
-                   for (peer_id, bw) in zip(chosen, bws)]
-            
+        # Evenly distribute the remaining bandwidth
+        if remaining_peers:
+            remaining_bws = even_split(remaining_bandwidth, len(remaining_peers))
+            chosen.extend(remaining_peers)
+            bws.extend(remaining_bws)
+
+        # Create Upload objects for the selected peers and their corresponding bandwidths
+        uploads = [Upload(self.id, peer_id, bw) for peer_id, bw in zip(chosen, bws)]
+        
         return uploads
