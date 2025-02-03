@@ -59,8 +59,7 @@ class k254Std(Peer):
         # Symmetry breaking is good...
 
         
-        # Sort peers by id.  This is probably not a useful sort, but other 
-        # sorts might be useful
+        # improved peer sort
         peers.sort(key=lambda p: p.id)
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
