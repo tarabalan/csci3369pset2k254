@@ -89,6 +89,23 @@ class k254Tourney(Peer):
         # has a list of Download objects for each Download to this peer in
         # the previous round.
 
+        last_round_downloads = history.downloads[round - 1]
+        contributions = {}
+
+        for dl in last_round_downloads:
+            if dl.from_id in contributions:
+                contributions[dl.from_id] += dl.blocks
+            else:
+                contributions[dl.from_id] = dl.blocks    
+
+        total_contributions = sum(contributions.values())
+        if total_contributions == 0:
+            total_contributions = 1  # Prevent division by zero
+
+        # Allocate bandwidth proportionally based on contributions
+        proportional_bw = int(self.up_bw * 0.9)
+        optimistic_bw = self.up_bw - proportional_bw        
+
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
             chosen = []
@@ -98,9 +115,9 @@ class k254Tourney(Peer):
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
+            top_contributors = sorted(contributions, key=contributions.get, reverse=True)[:3]
+            optimistic_peer = random.choice(requests).requester_id if len(requests) > 0 else None
+            chosen = top_contributors + ([optimistic_peer] if optimistic_peer else [])
             bws = even_split(self.up_bw, len(chosen))
 
         # create actual uploads out of the list of peer ids and bandwidths
