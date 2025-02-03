@@ -119,32 +119,26 @@ class k254Tyrant(Peer):
         
         # has a list of Download objects for each Download to this peer in
         # the previous round.
+        # Retrieve download contributions from the last round
         last_round_downloads = history.downloads[round - 1]
         contributions = {}
         for dl in last_round_downloads:
-            if dl.from_id in contributions:
-                contributions[dl.from_id] += dl.blocks
-            else:
-                contributions[dl.from_id] = dl.blocks    
+            contributions[dl.from_id] = contributions.get(dl.from_id, 0) + dl.blocks
 
         total_contributions = sum(contributions.values())
         if total_contributions == 0:
-            total_contributions = 1  # Prevent division by zero
-        
-        if len(requests) == 0:
-            logging.debug("No one wants my pieces!")
-            return []
+            total_contributions = 1  # Avoid division by zero
 
-        # Prioritize peers who have contributed the most
-        # Select top contributors
-        # Adaptive bandwidth allocation - Increase allocation to top contributors
-        top_contributors = sorted(contributions, key=contributions.get, reverse=True)[:3]
-        peer_bandwidth_allocation = {peer_id: (contributions[peer_id] / total_contributions) * self.up_bw for peer_id in top_contributors}
-        
-        # Adjust for cases where we over-allocate
-        scaling_factor = self.up_bw / sum(peer_bandwidth_allocation.values()) if sum(peer_bandwidth_allocation.values()) > 0 else 1
-        
-        bws = [int(peer_bandwidth_allocation[peer_id] * scaling_factor) for peer_id in chosen]
+        # Prioritize top contributors
+        top_contributors = sorted(contributions, key=contributions.get, reverse=True)
+        peer_bandwidth_allocation = {
+            peer_id: (contributions[peer_id] / total_contributions) * self.up_bw
+            for peer_id in top_contributors
+        }
+        chosen = list(peer_bandwidth_allocation.keys())
+            # Adjust for cases where we over-allocate
+
+        bws = [int(peer_bandwidth_allocation[peer_id]) for peer_id in chosen]
 
         
         # Occasionally unchoke a new peer with a small chance (exploration)
@@ -154,11 +148,12 @@ class k254Tyrant(Peer):
                 new_peer = random.choice(new_peers)
                 chosen.append(new_peer)
                 bws.append(int(self.up_bw * 0.1))  # Give them a small fraction of bandwidth
-        
-        # Ensure bandwidth is fairly distributed
-        if sum(bws) == 0:
-            chosen = [r.requester_id for r in random.sample(requests, min(len(requests), self.max_requests))]
-            bws = even_split(self.up_bw, len(chosen))
+
+        total_allocated_bandwidth = sum(bws)
+        if total_allocated_bandwidth > self.up_bw:
+            scaling_factor = self.up_bw / total_allocated_bandwidth
+            bws = [int(bw * scaling_factor) for bw in bws]
+
         
         uploads = [Upload(self.id, peer_id, bw) for peer_id, bw in zip(chosen, bws)]
         return uploads
