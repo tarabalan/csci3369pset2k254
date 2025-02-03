@@ -93,25 +93,39 @@ class k254Std(Peer):
         """
 
         round = history.current_round()
+        if round == 0:
+            return []
         logging.debug("%s again.  It's round %d." % (
             self.id, round))
+
+
         # One could look at other stuff in the history too here.
         # For example, history.downloads[round-1] (if round != 0, of course)
         # has a list of Download objects for each Download to this peer in
         # the previous round.
+        # track who contributed to you in the last round
+        last_round_downloads = history.downloads[round - 1]
+        contributions = {}
+
+        for dl in last_round_downloads:
+            if dl.from_id in contributions:
+                contributions[dl.from_id] += dl.blocks
+            else:
+                contributions[dl.from_id] = dl.blocks    
+
 
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
             chosen = []
             bws = []
         else:
-            logging.debug("Still here: uploading to a random peer")
+            logging.debug("Still here: using tft and optimistic unblocking")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
+            top_contributors = sorted(contributions, key=contributions.get, reverse=True)[:3]
+            optimistic_peer = random.choice(requests).requester_id if len(requests) > 0 else None
+            chosen = top_contributors + ([optimistic_peer] if optimistic_peer else [])
             bws = even_split(self.up_bw, len(chosen))
 
         # create actual uploads out of the list of peer ids and bandwidths
