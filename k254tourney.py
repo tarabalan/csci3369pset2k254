@@ -1,16 +1,7 @@
-#!/usr/bin/python
-
-# This is a dummy peer that just illustrates the available information your peers 
-# have available.
-
-# You'll want to copy this file to AgentNameXXX.py for various versions of XXX,
-# probably get rid of the silly logging messages, and then add more logic.
-
 import random
 import logging
 
 from messages import Upload, Request
-from util import even_split
 from peer import Peer
 
 class k254Tourney(Peer):
